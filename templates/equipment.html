@@ -61,6 +61,8 @@
 
 <section class="panel">
   <h2>清洁记录</h2>
+  <p class="hint">删除前会按当前排程计算受影响批次（由“已排入/风险已缓解”转为阻塞的批次及原因），
+    需填写删除原因并确认；删除时间、原因与受影响批次快照会留档，可在排程看板与导出中查询。</p>
   {% if not cleanings %}<p class="empty">暂无清洁记录。</p>{% else %}
   <table>
     <thead><tr><th>ID</th><th>器具</th><th>清洁时间</th><th>有效至</th><th>覆盖范围</th><th></th></tr></thead>
@@ -73,9 +75,8 @@
         <td class="time">{{ c.valid_until.replace('T', ' ') }}</td>
         <td>{% if c.covers == '*' %}<span class="badge ok">全部过敏原</span>{% else %}{{ c.covers.replace(',', '、') }}{% endif %}</td>
         <td>
-          <form method="post" action="{{ url_for('delete_cleaning', cid=c.id) }}">
-            <button class="btn danger small" type="submit">删除</button>
-          </form>
+          <a class="btn danger small"
+             href="{{ url_for('delete_cleaning', cid=c.id) }}">删除</a>
         </td>
       </tr>
     {% endfor %}

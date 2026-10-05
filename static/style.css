@@ -154,3 +154,24 @@ details.rev summary { cursor: pointer; color: var(--accent); font-size: 13px; wh
 .inline-form input {
   flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px;
 }
+
+.delete-meta { max-width: 560px; }
+.delete-meta th { width: 90px; }
+
+.affected-list { margin: 10px 0 0; padding: 0; list-style: none; }
+.affected-list > li {
+  border: 1px solid var(--line); border-left: 4px solid var(--bad);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; background: #fffafa;
+}
+.affected-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.affected-mit { font-size: 13px; color: var(--ok); margin: 4px 0; }
+
+.delete-form { max-width: 640px; display: flex; flex-direction: column; gap: 10px; }
+.delete-form label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.delete-form textarea {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 14px; font-family: inherit; resize: vertical;
+}
+.form-actions { display: flex; gap: 10px; align-items: center; }
+
+.deletion-log .reasons ul { margin-top: 4px; padding-left: 6px; }

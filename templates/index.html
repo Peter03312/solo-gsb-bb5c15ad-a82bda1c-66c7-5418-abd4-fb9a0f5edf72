@@ -13,6 +13,8 @@
   </form>
   <a class="btn ghost" href="{{ url_for('export_csv') }}">⬇ 导出 CSV</a>
   <a class="btn ghost" href="{{ url_for('export_json') }}">⬇ 导出 JSON</a>
+  <a class="btn ghost" href="{{ url_for('export_cleaning_deletions_csv') }}">🧾 删除记录 CSV</a>
+  <a class="btn ghost" href="{{ url_for('export_cleaning_deletions_json') }}">🧾 删除记录 JSON</a>
   <span class="hint">用 ↑↓ 调整顺序后自动重新计算；被阻塞批次不占用器具，阻塞原因保留在“风险来源”列。</span>
 </div>
 
@@ -84,4 +86,46 @@
   </tbody>
 </table>
 {% endif %}
+
+<section class="panel deletion-log">
+  <h2>清洁记录删除留档</h2>
+  <p class="hint">每次删除清洁记录都会保存删除时间、原因、被删记录信息与受影响批次快照；
+    删除后排程按现有规则重新计算，本留档不受后续调整影响。</p>
+  {% if not cleaning_deletions %}<p class="empty">暂无清洁记录删除操作。</p>{% else %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>清洁记录</th><th>删除时间</th><th>删除原因</th><th>受影响批次（删除时快照）</th></tr>
+    </thead>
+    <tbody>
+    {% for d in cleaning_deletions %}
+      <tr>
+        <td>{{ d.id }}</td>
+        <td>
+          #{{ d.cleaning_id }} · {{ d.equipment_name }}<br>
+          <span class="muted time">{{ d.cleaned_at.replace('T', ' ') }} → {{ d.valid_until.replace('T', ' ') }}</span><br>
+          <span class="muted">范围：{% if d.covers == '*' %}全部过敏原{% else %}{{ d.covers.replace(',', '、') }}{% endif %}</span>
+        </td>
+        <td class="time">{{ d.deleted_at.replace('T', ' ') }}</td>
+        <td>{{ d.reason }}</td>
+        <td>
+          {% if not d.affected_list %}<span class="muted">无批次因此变为阻塞</span>{% else %}
+          <ul class="reasons">
+            {% for a in d.affected_list %}
+            <li>
+              <strong>{{ a.batch_name }}</strong>
+              <span class="badge ok">{{ a.prev_status }}</span> → <span class="badge bad">{{ a.new_status }}</span>
+              <ul class="reasons">
+                {% for reason in a.block_reasons %}<li class="block">⛔ {{ reason }}</li>{% endfor %}
+              </ul>
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
 {% endblock %}
