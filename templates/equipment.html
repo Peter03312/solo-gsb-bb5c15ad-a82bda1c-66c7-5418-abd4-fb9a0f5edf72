@@ -61,6 +61,8 @@
 
 <section class="panel">
   <h2>清洁记录</h2>
+  <p class="hint">删除清洁记录前会按当前排程预演受影响批次，须填写删除原因并确认；
+    删除操作（时间、原因、受影响快照）保留在看板与导出中。</p>
   {% if not cleanings %}<p class="empty">暂无清洁记录。</p>{% else %}
   <table>
     <thead><tr><th>ID</th><th>器具</th><th>清洁时间</th><th>有效至</th><th>覆盖范围</th><th></th></tr></thead>

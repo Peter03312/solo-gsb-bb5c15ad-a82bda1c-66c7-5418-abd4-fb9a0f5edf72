@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS allergen_revision (
     reason TEXT NOT NULL,
     changed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cleaning_deletion (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cleaning_id INTEGER NOT NULL,
+    equipment_name TEXT NOT NULL,
+    cleaned_at TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    covers TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL,
+    deleted_at TEXT NOT NULL,
+    affected TEXT NOT NULL DEFAULT '[]'
+);
 """
 
 app = Flask(__name__)
@@ -154,6 +165,11 @@ def join_alg(lst):
     return "、".join(lst) if lst else "无"
 
 
+def covers_text(covers):
+    """清洁覆盖范围的可读文本：'*' 表示全部过敏原。"""
+    return "全部过敏原" if (covers or "").strip() == "*" else (covers or "")
+
+
 def risk_source_text(risk):
     return (f"器具「{risk['equipment']}」残留 {join_alg(risk['residual'])}"
             f"（来自批次「{risk['from_batch']}」）")
@@ -164,9 +180,9 @@ def risk_action_text(risk):
         return "残留过敏原均在本批次配方内，无交叉污染风险"
     if risk["level"] == "mitigated":
         c = risk["cleaning"]
-        covers = "全部过敏原" if c["covers"].strip() == "*" else c["covers"]
         return (f"新增风险 {join_alg(risk['new_risks'])}，已由清洁 #{c['id']} 覆盖"
-                f"（{c['cleaned_at']} 清洁，有效至 {c['valid_until']}，范围：{covers}）")
+                f"（{c['cleaned_at']} 清洁，有效至 {c['valid_until']}，"
+                f"范围：{covers_text(c['covers'])}）")
     return risk["block_reason"]
 
 
@@ -183,14 +199,20 @@ def revision_note_text(rev):
 
 # ---------------------------------------------------------------- 排程引擎
 
-def compute_schedule(conn):
-    """按当前顺序（seq, 计划开始时间）逐个尝试排入，返回每批次的结果。"""
+def compute_schedule(conn, exclude_cleaning_id=None):
+    """按当前顺序（seq, 计划开始时间）逐个尝试排入，返回每批次的结果。
+
+    exclude_cleaning_id 用于删除清洁记录前的预演：把该记录视为不存在，
+    只影响本次计算结果，不改动数据库。
+    """
     eq_names = {r["id"]: r["name"] for r in conn.execute("SELECT * FROM equipment")}
     equip_of = {}
     for r in conn.execute("SELECT * FROM batch_equipment"):
         equip_of.setdefault(r["batch_id"], []).append(r["equipment_id"])
     cleanings = {}
     for r in conn.execute("SELECT * FROM cleaning ORDER BY cleaned_at, id"):
+        if exclude_cleaning_id is not None and r["id"] == exclude_cleaning_id:
+            continue
         c = dict(r)
         c["cleaned_dt"] = parse_dt(c["cleaned_at"])
         c["valid_dt"] = parse_dt(c["valid_until"])
@@ -295,6 +317,32 @@ def latest_revisions(conn):
     return latest
 
 
+def cleaning_deletion_impact(conn, cid):
+    """预演删除清洁记录 cid：返回从“已排入/风险已缓解”变为阻塞的批次及原因。"""
+    before = {r["id"]: r for r in compute_schedule(conn)}
+    after = {r["id"]: r for r in compute_schedule(conn, exclude_cleaning_id=cid)}
+    affected = []
+    for bid, b in before.items():
+        a = after.get(bid)
+        if a and b["status"] == "accepted" and a["status"] == "blocked":
+            affected.append({"batch_id": bid, "batch_name": b["name"],
+                             "reasons": a["blocks"]})
+    return affected
+
+
+def cleaning_deletions(conn):
+    """全部清洁删除审计记录（新的在前），affected 从 JSON 快照还原为列表。"""
+    rows = []
+    for r in conn.execute("SELECT * FROM cleaning_deletion ORDER BY id DESC"):
+        d = dict(r)
+        try:
+            d["affected"] = json.loads(d["affected"])
+        except (TypeError, ValueError):
+            d["affected"] = []
+        rows.append(d)
+    return rows
+
+
 def normalize_seq(conn):
     rows = conn.execute(
         "SELECT id FROM batch ORDER BY seq, planned_start, id").fetchall()
@@ -311,16 +359,19 @@ def inject_globals():
             "risk_source_text": risk_source_text,
             "risk_action_text": risk_action_text,
             "revision_note_text": revision_note_text,
+            "covers_text": covers_text,
             "join_alg": join_alg}
 
 
 @app.route("/")
 def index():
-    results = compute_schedule(get_db())
+    conn = get_db()
+    results = compute_schedule(conn)
     accepted = sum(1 for r in results if r["status"] == "accepted")
     return render_template("index.html", results=results,
                            accepted=accepted,
-                           blocked_count=len(results) - accepted)
+                           blocked_count=len(results) - accepted,
+                           deletions=cleaning_deletions(conn))
 
 
 @app.post("/recalculate")
@@ -488,12 +539,58 @@ def add_cleaning():
     return redirect(url_for("equipment_page"))
 
 
+def get_cleaning(conn, cid):
+    return conn.execute(
+        "SELECT c.*, e.name AS equipment_name FROM cleaning c"
+        " JOIN equipment e ON e.id = c.equipment_id WHERE c.id=?",
+        (cid,)).fetchone()
+
+
 @app.post("/cleanings/<int:cid>/delete")
 def delete_cleaning(cid):
+    """删除第一步：按当前排程预演受影响批次，展示确认页（不改动任何数据）。"""
     conn = get_db()
+    row = get_cleaning(conn, cid)
+    if row is None:
+        flash("清洁记录不存在或已删除，未做任何修改", "error")
+        return redirect(url_for("equipment_page"))
+    return render_template("cleaning_delete.html", c=row,
+                           affected=cleaning_deletion_impact(conn, cid),
+                           reason="")
+
+
+@app.post("/cleanings/<int:cid>/delete/confirm")
+def delete_cleaning_confirm(cid):
+    """删除第二步：校验后删除记录，保存删除时间、原因与受影响批次快照。"""
+    conn = get_db()
+    row = get_cleaning(conn, cid)
+    if row is None:
+        flash("清洁记录不存在或已删除，未做任何修改", "error")
+        return redirect(url_for("equipment_page"))
+    reason = request.form.get("reason", "").strip()
+    if not reason:
+        flash("未删除：必须填写删除原因", "error")
+        return render_template("cleaning_delete.html", c=row,
+                               affected=cleaning_deletion_impact(conn, cid),
+                               reason=reason)
+    affected = cleaning_deletion_impact(conn, cid)
+    conn.execute(
+        "INSERT INTO cleaning_deletion"
+        "(cleaning_id, equipment_name, cleaned_at, valid_until, covers,"
+        " reason, deleted_at, affected)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (cid, row["equipment_name"], row["cleaned_at"], row["valid_until"],
+         row["covers"], reason, datetime.now().isoformat(timespec="seconds"),
+         json.dumps(affected, ensure_ascii=False)))
     conn.execute("DELETE FROM cleaning WHERE id=?", (cid,))
     conn.commit()
-    flash("清洁记录已删除", "ok")
+    if affected:
+        names = "、".join(f"「{a['batch_name']}」" for a in affected)
+        flash(f"清洁记录 #{cid} 已删除，{len(affected)} 个批次转为阻塞：{names}；"
+              f"删除时间、原因与受影响快照已保存，可在看板与导出中查询", "ok")
+    else:
+        flash(f"清洁记录 #{cid} 已删除，当前排程无批次受影响；"
+              f"删除时间、原因与快照已保存", "ok")
     return redirect(url_for("equipment_page"))
 
 
@@ -532,7 +629,8 @@ def export_rows(results):
 
 @app.route("/export.csv")
 def export_csv():
-    results = compute_schedule(get_db())
+    conn = get_db()
+    results = compute_schedule(conn)
     out = io.StringIO()
     out.write("﻿")  # BOM，便于 Excel 识别中文
     w = csv.writer(out)
@@ -543,6 +641,19 @@ def export_csv():
                     "、".join(row["equipment"]), row["planned_start"],
                     row["planned_end"], row["status"],
                     row["risk_source"], row["action"]])
+    deletions = cleaning_deletions(conn)
+    if deletions:
+        w.writerow([])
+        w.writerow(["清洁记录删除审计"])
+        w.writerow(["删除时间", "记录ID", "器具", "清洁时间", "有效至",
+                    "覆盖范围", "删除原因", "受影响批次（由已排入转为阻塞）"])
+        for d in deletions:
+            affected = "；".join(
+                f"{a['batch_name']}：{'；'.join(a['reasons'])}"
+                for a in d["affected"]) or "无"
+            w.writerow([d["deleted_at"], d["cleaning_id"], d["equipment_name"],
+                        d["cleaned_at"], d["valid_until"],
+                        covers_text(d["covers"]), d["reason"], affected])
     return Response(out.getvalue(), mimetype="text/csv; charset=utf-8",
                     headers={"Content-Disposition":
                              "attachment; filename=schedule_risk.csv"})
@@ -550,11 +661,13 @@ def export_csv():
 
 @app.route("/export.json")
 def export_json():
-    results = compute_schedule(get_db())
+    conn = get_db()
+    results = compute_schedule(conn)
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "app_url": APP_URL,
         "schedule": export_rows(results),
+        "cleaning_deletions": cleaning_deletions(conn),
     }
     return Response(json.dumps(payload, ensure_ascii=False, indent=2),
                     mimetype="application/json; charset=utf-8",

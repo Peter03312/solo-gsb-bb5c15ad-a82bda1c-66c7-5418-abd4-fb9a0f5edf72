@@ -84,4 +84,40 @@
   </tbody>
 </table>
 {% endif %}
+
+<section class="panel">
+  <h2>清洁记录删除审计</h2>
+  {% if not deletions %}
+  <p class="empty">暂无清洁记录删除操作。</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr><th>删除时间</th><th>被删除的清洁记录</th><th>删除原因</th>
+          <th>受影响批次快照（由已排入转为阻塞）</th></tr>
+    </thead>
+    <tbody>
+    {% for d in deletions %}
+      <tr>
+        <td class="time">{{ d.deleted_at.replace('T', ' ') }}</td>
+        <td>#{{ d.cleaning_id }} · {{ d.equipment_name }} ·
+            {{ d.cleaned_at.replace('T', ' ') }} 清洁，有效至
+            {{ d.valid_until.replace('T', ' ') }}，覆盖 {{ covers_text(d.covers) }}</td>
+        <td>{{ d.reason }}</td>
+        <td>
+          {% if not d.affected %}
+          <span class="muted">无批次受影响</span>
+          {% else %}
+          <ul class="reasons">
+            {% for a in d.affected %}
+            <li class="block">「{{ a.batch_name }}」：{{ a.reasons|join('；') }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
 {% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}删除清洁记录 · 共享厨房过敏原排程{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>删除清洁记录 #{{ c.id }} —— 影响确认</h2>
+  <p>待删除记录：器具「{{ c.equipment_name }}」，{{ c.cleaned_at.replace('T', ' ') }} 清洁，
+    有效至 {{ c.valid_until.replace('T', ' ') }}，覆盖范围：{{ covers_text(c.covers) }}。</p>
+
+  <h3>受影响批次（按当前排程预演）</h3>
+  {% if not affected %}
+  <p class="empty">按当前排程，删除该记录后没有批次从“已排入 / 风险已缓解”变为阻塞。</p>
+  {% else %}
+  <table>
+    <thead><tr><th>批次</th><th>状态变化</th><th>阻塞原因</th></tr></thead>
+    <tbody>
+    {% for a in affected %}
+      <tr class="blocked">
+        <td><strong>{{ a.batch_name }}</strong></td>
+        <td><span class="badge ok">已排入</span> → <span class="badge bad">已拒绝</span></td>
+        <td>
+          <ul class="reasons">
+            {% for r in a.reasons %}<li class="block">⛔ {{ r }}</li>{% endfor %}
+          </ul>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('delete_cleaning_confirm', cid=c.id) }}"
+        class="grid-form" style="margin-top:14px">
+    <label>删除原因（必填）
+      <input type="text" name="reason" required value="{{ reason }}"
+             placeholder="如：录入错误，重复登记">
+    </label>
+    <div class="form-actions">
+      <button class="btn danger" type="submit">确认删除</button>
+      <a class="btn ghost" href="{{ url_for('equipment_page') }}">取消（不改动数据）</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
